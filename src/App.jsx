@@ -1,21 +1,30 @@
 import { useEffect, useState, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import PixelCanvas from './components/PixelCanvas'
 import Toolbar from './components/Toolbar'
 import Leaderboard from './components/Leaderboard'
 import DiscordCTA from './components/DiscordCTA'
 import NameModal from './components/NameModal'
 import { useUser } from './hooks/useUser'
+import { useEconomy } from './hooks/useEconomy'
 
 const RECENT_KEY = 'pixelpop_recent_colors'
 
 export default function App() {
-  const { uuid, profile, setProfile, setDisplayName } = useUser()
+  const { uuid, profile, setDisplayName } = useUser()
+  const econ = useEconomy()
   const [tool, setTool] = useState('place')
   const [color, setColor] = useState('#00ff9c')
   const [recent, setRecent] = useState(
     () => JSON.parse(localStorage.getItem(RECENT_KEY) || '[]')
   )
   const [status, setStatus] = useState('')
+
+  // Seed the client economy from the freshly loaded profile.
+  useEffect(() => {
+    if (profile) econ.applyProfile(profile)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.id])
 
   const pushRecent = useCallback((c) => {
     setRecent((prev) => {
@@ -25,34 +34,24 @@ export default function App() {
     })
   }, [])
 
-  // Surface RPC results (cooldown, level-ups, reports) in the status bar and
-  // keep the local economy readout in sync.
+  // Every RPC result re-anchors the authoritative economy and updates status.
   const onResult = useCallback(
     (data) => {
+      econ.applyServer(data)
       if (!data) return setStatus('network error')
       if (data.ok === false) {
-        if (data.error === 'cooldown') setStatus('on cooldown — banking pixels…')
-        else setStatus(data.error)
-        return
-      }
-      if (data.info) return setStatus(data.info)
-      if (typeof data.available === 'number') {
-        setProfile((p) =>
-          p
-            ? {
-                ...p,
-                pixels_available: data.available,
-                level: data.level ?? p.level,
-                pixels_placed: data.pixels_placed ?? p.pixels_placed,
-              }
-            : p
+        return setStatus(
+          data.error === 'cooldown' ? 'on cooldown — banking pixels…' : data.error
         )
       }
-      if (data.purged) setStatus('user purged (10+ reports)')
-      else if (data.removed != null) setStatus(`destroyed ${data.removed} pixel(s)`)
-      else setStatus('placed')
+      if (data.info) return setStatus(data.info)
+      if (data.purged) return setStatus('user purged (10+ reports)')
+      if (data.removed != null) return setStatus(`destroyed ${data.removed} pixel(s)`)
+      if (typeof data.reports === 'number')
+        return setStatus(`reported (${data.reports}/10)`)
+      return setStatus('placed')
     },
-    [setProfile]
+    [econ]
   )
 
   const onColorPick = useCallback(
@@ -71,24 +70,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [color])
 
-  const level = profile?.level ?? 1
-  const bank = profile?.pixels_available ?? 0
-
   return (
     <div className="flex h-screen flex-col">
       {/* header */}
       <header className="flex items-center justify-between gap-4 border-b border-edge bg-panel px-4 py-2">
         <div className="flex items-baseline gap-3">
-          <h1 className="text-sm font-bold tracking-[0.3em] text-accent">
-            PIXELPOP
-          </h1>
-          <span className="hidden text-[10px] text-muted sm:inline">
-            // territory war
-          </span>
+          <h1 className="text-sm font-bold tracking-[0.3em] text-accent">PIXELPOP</h1>
+          <span className="hidden text-[10px] text-muted sm:inline">// territory war</span>
         </div>
         <div className="flex items-center gap-3">
           <NameModal current={profile?.display_name} onSave={setDisplayName} />
           <DiscordCTA />
+          <Link
+            to="/admin"
+            className="hidden text-[10px] text-muted hover:text-ink sm:inline"
+          >
+            admin
+          </Link>
         </div>
       </header>
 
@@ -98,8 +96,7 @@ export default function App() {
         color={color}
         setColor={setColor}
         recent={recent}
-        bank={bank}
-        level={level}
+        econ={econ}
       />
 
       {/* main */}
@@ -109,6 +106,7 @@ export default function App() {
             uuid={uuid}
             tool={tool}
             color={color}
+            econ={econ}
             onColorPick={onColorPick}
             onResult={onResult}
           />

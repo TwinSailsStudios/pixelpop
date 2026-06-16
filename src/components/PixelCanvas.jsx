@@ -14,7 +14,7 @@ import {
  * canvas with a pan/zoom transform. Pointer interactions are routed through
  * the active tool (paint / destroy / eyedropper / report).
  */
-export default function PixelCanvas({ uuid, tool, color, onColorPick, onResult }) {
+export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onResult }) {
   const canvasRef = useRef(null)
   const frameRef = useRef(0)
 
@@ -33,7 +33,7 @@ export default function PixelCanvas({ uuid, tool, color, onColorPick, onResult }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const { offscreenRef, ready, sample } = usePixels(requestRender)
+  const { offscreenRef, ready, paint, sample } = usePixels(requestRender)
 
   // ---- rendering -----------------------------------------------------------
   const render = useCallback(() => {
@@ -164,6 +164,8 @@ export default function PixelCanvas({ uuid, tool, color, onColorPick, onResult }
   )
 
   // ---- tool actions --------------------------------------------------------
+  // Mutations paint the offscreen buffer immediately (optimistic) and roll back
+  // if the server rejects the call. The economy bank is spent/refunded in step.
   const act = useCallback(
     async (gx, gy) => {
       if (gx < 0 || gy < 0 || gx >= GRID || gy >= GRID) return
@@ -172,7 +174,9 @@ export default function PixelCanvas({ uuid, tool, color, onColorPick, onResult }
         onColorPick?.(sample(gx, gy))
         return
       }
+
       if (tool === 'report') {
+        // A purge is reflected by realtime DELETE events repainting the cells.
         const { data } = await supabase.rpc('report_pixel', {
           p_reporter: uuid,
           p_x: gx,
@@ -181,31 +185,52 @@ export default function PixelCanvas({ uuid, tool, color, onColorPick, onResult }
         onResult?.(data)
         return
       }
+
       if (tool === 'destroy') {
-        destroyBuf.current.push({ x: gx, y: gy })
-        if (destroyBuf.current.length >= 2) {
-          const coords = destroyBuf.current.slice(0, 2)
-          destroyBuf.current = []
-          const { data } = await supabase.rpc('destroy_pixels', {
-            p_id: uuid,
-            p_coords: coords,
-          })
-          onResult?.(data)
-        } else {
+        destroyBuf.current.push({ x: gx, y: gy, prev: sample(gx, gy) })
+        if (destroyBuf.current.length < 2) {
           onResult?.({ ok: true, info: 'select 1 more pixel to destroy' })
+          return
         }
+        const batch = destroyBuf.current.slice(0, 2)
+        destroyBuf.current = []
+        if (!econ?.trySpend(1)) {
+          onResult?.({ ok: false, error: 'cooldown' })
+          return
+        }
+        batch.forEach((b) => paint(b.x, b.y, VOID_COLOR)) // optimistic
+        const { data } = await supabase.rpc('destroy_pixels', {
+          p_id: uuid,
+          p_coords: batch.map(({ x, y }) => ({ x, y })),
+        })
+        if (!data || data.ok === false) {
+          batch.forEach((b) => paint(b.x, b.y, b.prev)) // revert
+          econ?.refund(1)
+        }
+        onResult?.(data)
         return
       }
+
       // default: place
+      const prev = sample(gx, gy)
+      if (!econ?.trySpend(1)) {
+        onResult?.({ ok: false, error: 'cooldown' })
+        return
+      }
+      paint(gx, gy, color) // optimistic
       const { data } = await supabase.rpc('place_pixel', {
         p_id: uuid,
         p_x: gx,
         p_y: gy,
         p_color: color,
       })
+      if (!data || data.ok === false) {
+        paint(gx, gy, prev) // revert
+        econ?.refund(1)
+      }
       onResult?.(data)
     },
-    [tool, color, uuid, sample, onColorPick, onResult]
+    [tool, color, uuid, sample, paint, econ, onColorPick, onResult]
   )
 
   const onPointerUp = useCallback(

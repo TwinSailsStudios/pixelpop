@@ -7,15 +7,8 @@ const TOOLS = [
   { id: 'report', label: 'REPORT', hint: 'flag abuse' },
 ]
 
-export default function Toolbar({
-  tool,
-  setTool,
-  color,
-  setColor,
-  recent,
-  bank,
-  level,
-}) {
+export default function Toolbar({ tool, setTool, color, setColor, recent, econ }) {
+  const { floor, rate, level, full, secondsToNext, fraction } = econ
   return (
     <div className="flex flex-col gap-3 border-b border-edge bg-panel/80 p-3 backdrop-blur md:flex-row md:items-center md:justify-between">
       {/* tools */}
@@ -74,14 +67,25 @@ export default function Toolbar({
         )}
       </div>
 
-      {/* economy readout */}
+      {/* economy readout + live cooldown */}
       <div className="flex items-center gap-4 text-xs">
         <span className="text-muted">
           LVL <span className="text-accent">{level}</span>
         </span>
         <span className="text-muted">
-          BANK <span className="text-accent">{Math.floor(bank)}</span>/{level}
+          BANK <span className="text-accent">{floor}</span>/{rate}
         </span>
+        <div className="flex w-28 flex-col gap-1">
+          <span className="text-[10px] text-muted">
+            {full ? 'BANK FULL' : `+1 in ${secondsToNext}s`}
+          </span>
+          <div className="h-1 w-full overflow-hidden rounded bg-edge">
+            <div
+              className="h-full bg-accent transition-[width] duration-200"
+              style={{ width: `${Math.round((full ? 1 : fraction) * 100)}%` }}
+            />
+          </div>
+        </div>
       </div>
     </div>
   )
