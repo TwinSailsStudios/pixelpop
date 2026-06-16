@@ -9,11 +9,11 @@ const TOOLS = [
   { id: 'report', label: 'REPORT', hint: 'flag a user (once)' },
 ]
 
-export default function Toolbar({ tool, setTool, color, setColor, recent, controls }) {
+export default function Toolbar({ tool, setTool, color, setColor, recent, fill, setFill, controls }) {
   return (
     <div className="flex flex-col flex-wrap gap-3 border-b border-edge bg-panel/80 px-3 py-2 backdrop-blur md:flex-row md:items-center md:justify-between">
       {/* tools */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {TOOLS.map((t) => (
           <button
             key={t.id}
@@ -28,6 +28,19 @@ export default function Toolbar({ tool, setTool, color, setColor, recent, contro
             {t.label}
           </button>
         ))}
+        {tool === 'square' && (
+          <button
+            onClick={() => setFill((f) => !f)}
+            title="Toggle outline / filled square"
+            className={`rounded border px-3 py-1.5 text-xs tracking-wider transition ${
+              fill
+                ? 'border-accent bg-accent/10 text-accent'
+                : 'border-edge text-muted hover:border-muted hover:text-ink'
+            }`}
+          >
+            {fill ? '■ FILLED' : '□ OUTLINE'}
+          </button>
+        )}
       </div>
 
       {/* color */}

@@ -16,6 +16,7 @@ export default function App() {
   const { theme, toggle } = useTheme()
   const [tool, setTool] = useState('place')
   const [color, setColor] = useState('#00ff9c')
+  const [fill, setFill] = useState(false)
   const [recent, setRecent] = useState(
     () => JSON.parse(localStorage.getItem(RECENT_KEY) || '[]')
   )
@@ -80,6 +81,8 @@ export default function App() {
         color={color}
         setColor={setColor}
         recent={recent}
+        fill={fill}
+        setFill={setFill}
         controls={controls}
       />
 
@@ -90,6 +93,7 @@ export default function App() {
             uuid={uuid}
             tool={tool}
             color={color}
+            fill={fill}
             boardBg={BOARD_BG[theme] || BOARD_BG.dark}
             onColorPick={onColorPick}
             onResult={onResult}

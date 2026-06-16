@@ -78,7 +78,8 @@ Open http://localhost:5173.
 - No cooldown, no banking, no levels — **placing and destroying are unlimited**.
 - Tools: **PLACE** (1 pixel), **LINE** and **SQUARE** (click two points — the
   line/rectangle is placed in your active color via the `place_pixels` batch
-  RPC), **DESTROY** (erase a pixel), **PICK** (eyedropper), **REPORT**.
+  RPC; SQUARE has an **outline / filled** toggle), **DESTROY** (erase a pixel),
+  **PICK** (eyedropper), **REPORT**.
 - **Hover any pixel** to highlight every cell owned by that user (a stable
   per-user color tint) and see their name + leaderboard rank.
 - Counts are still tracked per user to drive the live leaderboard.

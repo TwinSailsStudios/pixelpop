@@ -30,10 +30,18 @@ function lineCells(a, b) {
   return cells
 }
 
-function rectCells(a, b) {
+function rectCells(a, b, filled) {
   const lx = Math.min(a.x, b.x), hx = Math.max(a.x, b.x)
   const ly = Math.min(a.y, b.y), hy = Math.max(a.y, b.y)
   const cells = []
+  if (filled) {
+    for (let x = lx; x <= hx; x++)
+      for (let y = ly; y <= hy; y++) {
+        cells.push({ x, y })
+        if (cells.length > 20000) return cells // guard runaway fills
+      }
+    return cells
+  }
   for (let x = lx; x <= hx; x++) { cells.push({ x, y: ly }); cells.push({ x, y: hy }) }
   for (let y = ly + 1; y < hy; y++) { cells.push({ x: lx, y }); cells.push({ x: hx, y }) }
   return cells
@@ -51,7 +59,7 @@ function tintFor(id) {
  * Tools: place / line / square / destroy / eyedropper / report. Hovering a
  * pixel highlights every cell owned by that user and shows their leaderboard card.
  */
-export default function PixelCanvas({ uuid, tool, color, boardBg, onColorPick, onResult }) {
+export default function PixelCanvas({ uuid, tool, color, fill, boardBg, onColorPick, onResult }) {
   const canvasRef = useRef(null)
   const frameRef = useRef(0)
   const renderRef = useRef(null)
@@ -109,7 +117,7 @@ export default function PixelCanvas({ uuid, tool, color, boardBg, onColorPick, o
     if (s.start && (tool === 'line' || tool === 'square')) {
       const cells = tool === 'line'
         ? lineCells(s.start, hoverCell.current)
-        : rectCells(s.start, hoverCell.current)
+        : rectCells(s.start, hoverCell.current, fill)
       ctx.globalAlpha = 0.7
       ctx.fillStyle = color
       for (const c of cells) ctx.fillRect(c.x, c.y, 1, 1)
@@ -139,7 +147,7 @@ export default function PixelCanvas({ uuid, tool, color, boardBg, onColorPick, o
       ctx.stroke()
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0)
-  }, [offscreenRef, boardBg, tool, color, cellsOf])
+  }, [offscreenRef, boardBg, tool, color, fill, cellsOf])
   renderRef.current = render
 
   // re-render when the theme / tool / color changes
@@ -301,7 +309,7 @@ export default function PixelCanvas({ uuid, tool, color, boardBg, onColorPick, o
         const cells =
           tool === 'line'
             ? lineCells(shape.current.start, { x: gx, y: gy })
-            : rectCells(shape.current.start, { x: gx, y: gy })
+            : rectCells(shape.current.start, { x: gx, y: gy }, fill)
         shape.current.start = null
         const prevs = cells.map((c) => ({
           ...c,
@@ -334,7 +342,7 @@ export default function PixelCanvas({ uuid, tool, color, boardBg, onColorPick, o
       if (!data || data.ok === false) applyCell(gx, gy, prevC, prevO)
       onResult?.(data)
     },
-    [tool, color, uuid, sample, ownerAt, applyCell, clearCell, onColorPick, onResult, requestRender]
+    [tool, color, fill, uuid, sample, ownerAt, applyCell, clearCell, onColorPick, onResult, requestRender]
   )
 
   // ---- pointer handlers ----------------------------------------------------
