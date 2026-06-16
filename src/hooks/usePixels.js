@@ -13,9 +13,14 @@ const cellKey = (x, y) => x + ',' + y
  * with what's on screen, not with the board size. `cellsByOwner` powers the
  * "highlight this user's pixels" hover feature.
  */
+// Don't try to back-fill the whole 30k board at once: above this many visible
+// tiles (i.e. zoomed far out) we rely on realtime + already-loaded tiles only.
+const MAX_REGION_TILES = 80
+
 export function usePixels(onChange) {
   const tilesRef = useRef(new Map())
   const cellsByOwnerRef = useRef(new Map())
+  const loadedTilesRef = useRef(new Set())
   const [ready, setReady] = useState(false)
 
   const indexOwner = (ck, oldOwner, newOwner) => {
@@ -90,29 +95,54 @@ export function usePixels(onChange) {
     }
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
+  // Lazily back-fill the tiles overlapping a viewport bbox (each fetched once).
+  // Realtime keeps everything current after that, so we only pay for the
+  // historical state of regions the user actually looks at.
+  const ensureRegion = useCallback(
+    async (minX, minY, maxX, maxY) => {
+      const tx0 = minX >> 8, tx1 = maxX >> 8
+      const ty0 = minY >> 8, ty1 = maxY >> 8
+      if ((tx1 - tx0 + 1) * (ty1 - ty0 + 1) > MAX_REGION_TILES) return
 
-    async function loadAll() {
-      const page = 1000
+      const loaded = loadedTilesRef.current
+      let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity
+      let any = false
+      for (let tx = tx0; tx <= tx1; tx++) {
+        for (let ty = ty0; ty <= ty1; ty++) {
+          const k = tx + ',' + ty
+          if (loaded.has(k)) continue
+          loaded.add(k)
+          any = true
+          bx0 = Math.min(bx0, tx * TILE)
+          by0 = Math.min(by0, ty * TILE)
+          bx1 = Math.max(bx1, tx * TILE + TILE - 1)
+          by1 = Math.max(by1, ty * TILE + TILE - 1)
+        }
+      }
+      if (!any) return
+
       let from = 0
+      const page = 1000
+      let total = 0
       for (;;) {
         const { data, error } = await supabase
           .from('pixels')
           .select('x,y,color,owner')
+          .gte('x', bx0).lte('x', bx1)
+          .gte('y', by0).lte('y', by1)
           .range(from, from + page - 1)
-        if (error || !data || cancelled) break
+        if (error || !data) break
         for (const p of data) applyCell(p.x, p.y, p.color, p.owner)
-        if (data.length < page) break
+        total += data.length
+        if (data.length < page || total > 100000) break
         from += page
       }
-      if (!cancelled) {
-        setReady(true)
-        onChange?.()
-      }
-    }
-    loadAll()
+      onChange?.()
+    },
+    [applyCell, onChange]
+  )
 
+  useEffect(() => {
     const channel = supabase
       .channel('pixels-stream')
       .on(
@@ -128,14 +158,15 @@ export function usePixels(onChange) {
           }
         }
       )
-      .subscribe()
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') setReady(true)
+      })
 
     return () => {
-      cancelled = true
       supabase.removeChannel(channel)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  return { ready, applyCell, clearCell, sample, ownerAt, cellsOf, forEachIn }
+  return { ready, applyCell, clearCell, sample, ownerAt, cellsOf, forEachIn, ensureRegion }
 }

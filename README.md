@@ -5,8 +5,11 @@ A free-tier, massively-multiplayer real-time **pixel territory war** — a
 and destroy pixels in a free-for-all. Built brutalist / terminal-style.
 
 The board is far too big (900M cells) to hold as one buffer, so it's stored
-**sparsely** (only filled cells) and indexed by 256×256 tiles; the client draws
-only the visible tiles each frame.
+**sparsely** (only filled cells) and indexed by 256×256 tiles. The client draws
+only the visible tiles each frame and **lazily loads pixels per viewport** as
+you pan/zoom (each tile fetched once); Supabase Realtime keeps everything live
+after that. Zoomed all the way out, it shows what's already loaded rather than
+back-filling the entire board.
 
 **Stack:** React + Vite + TailwindCSS (Vercel) · Supabase (Postgres + Realtime
 + RPC). No auth servers, no payments — 100% serverless / free tier.

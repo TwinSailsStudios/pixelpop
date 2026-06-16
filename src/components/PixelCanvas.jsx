@@ -81,8 +81,28 @@ export default function PixelCanvas({ uuid, tool, color, fill, boardBg, onColorP
     })
   }, [])
 
-  const { ready, applyCell, clearCell, sample, ownerAt, cellsOf, forEachIn } =
+  const { ready, applyCell, clearCell, sample, ownerAt, cellsOf, forEachIn, ensureRegion } =
     usePixels(requestRender)
+
+  // Lazy-load the pixels under the current viewport (debounced).
+  const regionTimer = useRef(0)
+  const ensureView = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const { scale, ox, oy } = view.current
+    const minX = Math.max(0, Math.floor(-ox / scale))
+    const maxX = Math.min(GRID - 1, Math.floor((canvas.width - ox) / scale))
+    const minY = Math.max(0, Math.floor(-oy / scale))
+    const maxY = Math.min(GRID - 1, Math.floor((canvas.height - oy) / scale))
+    ensureRegion(minX, minY, maxX, maxY)
+  }, [ensureRegion])
+  const ensureViewSoon = useCallback(() => {
+    if (regionTimer.current) return
+    regionTimer.current = setTimeout(() => {
+      regionTimer.current = 0
+      ensureView()
+    }, 150)
+  }, [ensureView])
 
   // ---- rendering -----------------------------------------------------------
   // Draw only the cells inside the viewport, in screen space (each at least 1px
@@ -189,15 +209,19 @@ export default function PixelCanvas({ uuid, tool, color, fill, boardBg, onColorP
         view.current.oy = canvas.height / 2 - (GRID * s) / 2
       }
       requestRender()
+      ensureView()
     }
     resize()
     window.addEventListener('resize', resize)
     return () => window.removeEventListener('resize', resize)
-  }, [requestRender])
+  }, [requestRender, ensureView])
 
   useEffect(() => {
-    if (ready) requestRender()
-  }, [ready, requestRender])
+    if (ready) {
+      requestRender()
+      ensureView()
+    }
+  }, [ready, requestRender, ensureView])
 
   // ---- coordinate mapping --------------------------------------------------
   const toGrid = useCallback((clientX, clientY) => {
@@ -227,8 +251,9 @@ export default function PixelCanvas({ uuid, tool, color, fill, boardBg, onColorP
       v.oy = cy - (cy - v.oy) * (next / v.scale)
       v.scale = next
       requestRender()
+      ensureViewSoon()
     },
-    [requestRender]
+    [requestRender, ensureViewSoon]
   )
 
   const onWheel = useCallback(
@@ -381,9 +406,10 @@ export default function PixelCanvas({ uuid, tool, color, fill, boardBg, onColorP
         d.x = e.clientX
         d.y = e.clientY
         requestRender()
+        ensureViewSoon()
       }
     },
-    [toGrid, updateHover, requestRender]
+    [toGrid, updateHover, requestRender, ensureViewSoon]
   )
 
   const onPointerUp = useCallback(
