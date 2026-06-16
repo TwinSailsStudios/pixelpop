@@ -48,12 +48,15 @@ pixelpop/
 ### 1. Database
 
 1. Create a free Supabase project.
-2. Open the **SQL Editor** and run `supabase/migrations/0001_init.sql`, then
-   `supabase/migrations/0002_admin.sql` (or `supabase db push` with the CLI).
+2. Open the **SQL Editor** and run the migrations in order:
+   `0001_init.sql`, `0002_admin.sql`, `0003_freeforall.sql`
+   (or `supabase db push` with the CLI).
 3. `0001` creates the `profiles`, `pixels`, `reports`, `admin_audit_logs`
-   tables, the `leaderboard_placed` / `leaderboard_destroyed` views, the
-   gameplay RPCs, RLS policies, and adds `pixels` to the realtime publication.
-   `0002` adds the admin secret store + God Mode RPCs.
+   tables, the `leaderboard_placed` / `leaderboard_destroyed` views, RLS
+   policies, and adds `pixels` to the realtime publication. `0002` adds the
+   admin secret store + God Mode RPCs. `0003` switches gameplay to free-for-all
+   (no cooldown), adds batch placement + the hover card RPC, and makes reports
+   one-per-user with no auto-purge.
 4. **Set your admin secret** (one time) so `/admin` can unlock:
    ```sql
    insert into admin_secrets (id, token) values (1, 'YOUR_LONG_RANDOM_TOKEN')
@@ -70,31 +73,27 @@ npm run dev
 
 Open http://localhost:5173.
 
-## How the economy works (server-validated)
+## Gameplay (free-for-all)
 
-| Level | Pixels/min | Max bank | Unlocks at (total placed) |
-|------:|-----------:|---------:|--------------------------:|
-| 1 | 1 | 1 | 0 |
-| 2 | 2 | 2 | 100 |
-| 3 | 3 | 3 | 500 |
-| 4 | 4 | 4 | 1,500 |
-| 5 | 5 | 5 | 5,000 |
-
-- **Place** costs 1 charge. **Destroy** removes up to 2 cells for 1 charge.
-- Charges refill at your level's rate and bank up to your level cap while AFK.
-- All of this is enforced in `place_pixel` / `destroy_pixels` (SECURITY DEFINER
-  RPCs) by comparing server timestamps — the client cannot speed-hack it.
+- No cooldown, no banking, no levels — **placing and destroying are unlimited**.
+- Tools: **PLACE** (1 pixel), **LINE** and **SQUARE** (click two points — the
+  line/rectangle is placed in your active color via the `place_pixels` batch
+  RPC), **DESTROY** (erase a pixel), **PICK** (eyedropper), **REPORT**.
+- **Hover any pixel** to highlight every cell owned by that user (a stable
+  per-user color tint) and see their name + leaderboard rank.
+- Counts are still tracked per user to drive the live leaderboard.
 
 ## Moderation & `/admin` God Mode
 
-- **Report** any pixel; at **10+ reports** the owner's drawings auto-purge
-  (logged to `admin_audit_logs`).
+- **Report** flags a user. You can report a given user **only once** (enforced
+  by a unique `(reported, reporter)` index). Reports never auto-remove anything
+  — **only an admin can wipe**.
 - Visit **`/admin`** and enter the secret you stored in `admin_secrets`. The
   token is validated server-side by the `admin_check` RPC — it is **never**
   baked into the client bundle (set `VITE_ADMIN_TOKEN` only if you want the
   login box prefilled in dev). The dashboard provides:
   - **Audit Wipe** — clear one user's drawings; a reason is required and logged.
-  - **Force-Wipe** — clear a rectangular area, bypassing the 10-report rule.
+  - **Force-Wipe** — clear a rectangular area.
   - **Stamp Tool** — inject predefined pixel art (`src/lib/stamps.js`) at any
     origin to seed the map and spark faction wars, with a live preview and an
     optional color override.

@@ -1,14 +1,15 @@
 import { DEFAULT_PALETTE } from '../lib/constants'
 
 const TOOLS = [
-  { id: 'place', label: 'PLACE', hint: '1 pixel' },
-  { id: 'destroy', label: 'DESTROY', hint: '2 pixels' },
+  { id: 'place', label: 'PLACE', hint: 'place 1 pixel' },
+  { id: 'line', label: 'LINE', hint: 'click start, then end' },
+  { id: 'square', label: 'SQUARE', hint: 'click two corners' },
+  { id: 'destroy', label: 'DESTROY', hint: 'erase a pixel' },
   { id: 'eyedropper', label: 'PICK', hint: 'sample color' },
-  { id: 'report', label: 'REPORT', hint: 'flag abuse' },
+  { id: 'report', label: 'REPORT', hint: 'flag a user (once)' },
 ]
 
-export default function Toolbar({ tool, setTool, color, setColor, recent, econ, controls }) {
-  const { floor, rate, level, full, secondsToNext, fraction } = econ
+export default function Toolbar({ tool, setTool, color, setColor, recent, controls }) {
   return (
     <div className="flex flex-col flex-wrap gap-3 border-b border-edge bg-panel/80 px-3 py-2 backdrop-blur md:flex-row md:items-center md:justify-between">
       {/* tools */}
@@ -67,31 +68,8 @@ export default function Toolbar({ tool, setTool, color, setColor, recent, econ, 
         )}
       </div>
 
-      {/* economy readout + live cooldown */}
-      <div className="flex items-center gap-4 text-xs">
-        <span className="text-muted">
-          LVL <span className="text-accent">{level}</span>
-        </span>
-        <span className="text-muted">
-          BANK <span className="text-accent">{floor}</span>/{rate}
-        </span>
-        <div className="flex w-28 flex-col gap-1">
-          <span className="text-[10px] text-muted">
-            {full ? 'BANK FULL' : `+1 in ${secondsToNext}s`}
-          </span>
-          <div className="h-1 w-full overflow-hidden rounded bg-edge">
-            <div
-              className="h-full bg-accent transition-[width] duration-200"
-              style={{ width: `${Math.round((full ? 1 : fraction) * 100)}%` }}
-            />
-          </div>
-        </div>
-      </div>
-
       {/* right-side controls (name, theme, discord, admin) */}
-      {controls && (
-        <div className="flex items-center gap-3">{controls}</div>
-      )}
+      {controls && <div className="flex items-center gap-3">{controls}</div>}
     </div>
   )
 }

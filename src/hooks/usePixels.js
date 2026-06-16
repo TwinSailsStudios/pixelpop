@@ -2,47 +2,74 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { GRID, VOID_COLOR } from '../lib/constants'
 
+const keyOf = (x, y) => x + ',' + y
+
 /**
- * Keeps a 1000x1000 offscreen canvas as the single source of truth for pixel
- * colors. Initial state is paged in from the DB; live changes arrive over
- * Supabase Realtime. Consumers read `offscreenRef.current` and blit it to the
- * visible canvas (scaled) on each animation frame.
- *
- * @param onChange called after any pixel mutation so the view can re-render.
+ * Keeps a 1000x1000 offscreen canvas as the source of truth for pixel colors,
+ * plus two indexes for the "highlight this user's pixels" hover feature:
+ *   ownerAt:      "x,y" -> owner uuid
+ *   cellsByOwner: owner uuid -> Set("x,y")
+ * Voids stay transparent so the themed board background shows through.
  */
 export function usePixels(onChange) {
   const offscreenRef = useRef(null)
   const ctxRef = useRef(null)
+  const ownerAtRef = useRef(new Map())
+  const cellsByOwnerRef = useRef(new Map())
   const [ready, setReady] = useState(false)
 
-  // Lazily create the offscreen buffer once. Voids stay transparent so the
-  // themed board background (drawn on the visible canvas) shows through.
   if (!offscreenRef.current && typeof document !== 'undefined') {
     const c = document.createElement('canvas')
     c.width = GRID
     c.height = GRID
-    const ctx = c.getContext('2d', { willReadFrequently: true })
+    ctxRef.current = c.getContext('2d', { willReadFrequently: true })
     offscreenRef.current = c
-    ctxRef.current = ctx
   }
 
-  const paint = useCallback(
-    (x, y, color) => {
+  const trackOwner = (k, owner) => {
+    const at = ownerAtRef.current
+    const by = cellsByOwnerRef.current
+    const old = at.get(k)
+    if (old && old !== owner) by.get(old)?.delete(k)
+    if (owner) {
+      at.set(k, owner)
+      let set = by.get(owner)
+      if (!set) by.set(owner, (set = new Set()))
+      set.add(k)
+    } else {
+      at.delete(k)
+      if (old) by.get(old)?.delete(k)
+    }
+  }
+
+  // Paint a cell to a color and record its owner.
+  const applyCell = useCallback(
+    (x, y, color, owner) => {
       const ctx = ctxRef.current
       if (!ctx) return
-      if (!color || color === VOID_COLOR) {
-        ctx.clearRect(x, y, 1, 1) // erase -> transparent
-      } else {
+      if (!color || color === VOID_COLOR) ctx.clearRect(x, y, 1, 1)
+      else {
         ctx.fillStyle = color
         ctx.fillRect(x, y, 1, 1)
       }
+      trackOwner(keyOf(x, y), owner || null)
       onChange?.()
     },
     [onChange]
   )
 
-  // Read a single cell's color (eyedropper + optimistic-revert). Returns the
-  // VOID sentinel for empty cells so reverts erase rather than paint black.
+  // Erase a cell back to void.
+  const clearCell = useCallback(
+    (x, y) => {
+      const ctx = ctxRef.current
+      if (!ctx) return
+      ctx.clearRect(x, y, 1, 1)
+      trackOwner(keyOf(x, y), null)
+      onChange?.()
+    },
+    [onChange]
+  )
+
   const sample = useCallback((x, y) => {
     const ctx = ctxRef.current
     if (!ctx) return VOID_COLOR
@@ -54,20 +81,22 @@ export function usePixels(onChange) {
     )
   }, [])
 
+  const ownerAt = useCallback((x, y) => ownerAtRef.current.get(keyOf(x, y)) || null, [])
+  const cellsOf = useCallback((owner) => cellsByOwnerRef.current.get(owner), [])
+
   useEffect(() => {
     let cancelled = false
 
-    // Page the whole board in (1000 rows at a time stays under PostgREST caps).
     async function loadAll() {
       const page = 1000
       let from = 0
       for (;;) {
         const { data, error } = await supabase
           .from('pixels')
-          .select('x,y,color')
+          .select('x,y,color,owner')
           .range(from, from + page - 1)
         if (error || !data || cancelled) break
-        for (const p of data) paint(p.x, p.y, p.color)
+        for (const p of data) applyCell(p.x, p.y, p.color, p.owner)
         if (data.length < page) break
         from += page
       }
@@ -86,10 +115,10 @@ export function usePixels(onChange) {
         (payload) => {
           if (payload.eventType === 'DELETE') {
             const { x, y } = payload.old
-            paint(x, y, VOID_COLOR)
+            clearCell(x, y)
           } else {
-            const { x, y, color } = payload.new
-            paint(x, y, color)
+            const { x, y, color, owner } = payload.new
+            applyCell(x, y, color, owner)
           }
         }
       )
@@ -102,5 +131,5 @@ export function usePixels(onChange) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  return { offscreenRef, ready, paint, sample }
+  return { offscreenRef, ready, applyCell, clearCell, sample, ownerAt, cellsOf }
 }

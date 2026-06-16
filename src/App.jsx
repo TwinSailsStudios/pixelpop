@@ -6,7 +6,6 @@ import Leaderboard from './components/Leaderboard'
 import DiscordCTA from './components/DiscordCTA'
 import NameModal from './components/NameModal'
 import { useUser } from './hooks/useUser'
-import { useEconomy } from './hooks/useEconomy'
 import { useTheme } from './hooks/useTheme'
 import { BOARD_BG } from './lib/constants'
 
@@ -14,7 +13,6 @@ const RECENT_KEY = 'pixelpop_recent_colors'
 
 export default function App() {
   const { uuid, profile, setDisplayName } = useUser()
-  const econ = useEconomy()
   const { theme, toggle } = useTheme()
   const [tool, setTool] = useState('place')
   const [color, setColor] = useState('#00ff9c')
@@ -22,12 +20,6 @@ export default function App() {
     () => JSON.parse(localStorage.getItem(RECENT_KEY) || '[]')
   )
   const [status, setStatus] = useState('')
-
-  // Seed the client economy from the freshly loaded profile.
-  useEffect(() => {
-    if (profile) econ.applyProfile(profile)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.id])
 
   const pushRecent = useCallback((c) => {
     setRecent((prev) => {
@@ -37,25 +29,16 @@ export default function App() {
     })
   }, [])
 
-  // Every RPC result re-anchors the authoritative economy and updates status.
-  const onResult = useCallback(
-    (data) => {
-      econ.applyServer(data)
-      if (!data) return setStatus('network error')
-      if (data.ok === false) {
-        return setStatus(
-          data.error === 'cooldown' ? 'on cooldown — banking pixels…' : data.error
-        )
-      }
-      if (data.info) return setStatus(data.info)
-      if (data.purged) return setStatus('user purged (10+ reports)')
-      if (data.removed != null) return setStatus(`destroyed ${data.removed} pixel(s)`)
-      if (typeof data.reports === 'number')
-        return setStatus(`reported (${data.reports}/10)`)
-      return setStatus('placed')
-    },
-    [econ]
-  )
+  const onResult = useCallback((data) => {
+    if (!data) return setStatus('network error')
+    if (data.ok === false) return setStatus(data.error)
+    if (data.already) return setStatus('you already reported this user')
+    if (data.info) return setStatus(data.info)
+    if (typeof data.reports === 'number') return setStatus(`reported (${data.reports} total)`)
+    if (data.removed != null) return setStatus(`destroyed ${data.removed} pixel(s)`)
+    if (data.count != null) return setStatus(`placed ${data.count} pixel(s)`)
+    return setStatus('placed')
+  }, [])
 
   const onColorPick = useCallback(
     (c) => {
@@ -67,7 +50,6 @@ export default function App() {
     [pushRecent]
   )
 
-  // Track palette use for the "recent" row.
   useEffect(() => {
     if (color) pushRecent(color)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -98,7 +80,6 @@ export default function App() {
         color={color}
         setColor={setColor}
         recent={recent}
-        econ={econ}
         controls={controls}
       />
 
@@ -109,13 +90,12 @@ export default function App() {
             uuid={uuid}
             tool={tool}
             color={color}
-            econ={econ}
             boardBg={BOARD_BG[theme] || BOARD_BG.dark}
             onColorPick={onColorPick}
             onResult={onResult}
           />
-          <div className="pointer-events-none absolute bottom-2 left-2 rounded bg-void/70 px-2 py-1 text-[10px] text-muted">
-            {status || 'scroll to zoom · drag to pan · click to act'}
+          <div className="pointer-events-none absolute bottom-2 left-2 z-10 rounded bg-void/70 px-2 py-1 text-[10px] text-muted">
+            {status || 'scroll/buttons to zoom · drag to pan · hover a pixel to see its owner'}
           </div>
         </main>
         <Leaderboard />
