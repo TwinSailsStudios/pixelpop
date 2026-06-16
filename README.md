@@ -1,8 +1,12 @@
 # PIXELPOP
 
 A free-tier, massively-multiplayer real-time **pixel territory war** — a
-1000×1000 canvas where anonymous players place and destroy pixels, bank an AFK
-income, level up, and fight for the board. Built brutalist / terminal-style.
+**30,000 × 30,000** canvas where anonymous players (and autonomous bots) place
+and destroy pixels in a free-for-all. Built brutalist / terminal-style.
+
+The board is far too big (900M cells) to hold as one buffer, so it's stored
+**sparsely** (only filled cells) and indexed by 256×256 tiles; the client draws
+only the visible tiles each frame.
 
 **Stack:** React + Vite + TailwindCSS (Vercel) · Supabase (Postgres + Realtime
 + RPC). No auth servers, no payments — 100% serverless / free tier.
@@ -22,7 +26,10 @@ pixelpop/
 ├── supabase/
 │   └── migrations/
 │       ├── 0001_init.sql        # tables, RPCs, RLS, leaderboard views, realtime
-│       └── 0002_admin.sql       # admin_secrets + God Mode RPCs (audit/force/stamp)
+│       ├── 0002_admin.sql       # admin_secrets + God Mode RPCs (audit/force/stamp)
+│       ├── 0003_freeforall.sql  # free-for-all gameplay, batch place, hover card
+│       ├── 0004_bigboard.sql    # widen the board to 30,000 x 30,000
+│       └── 0005_bots.sql        # autonomous bots + pg_cron schedule
 └── src/
     ├── main.jsx                 # mounts the router (/ board, /admin God Mode)
     ├── App.jsx · index.css
@@ -49,14 +56,12 @@ pixelpop/
 
 1. Create a free Supabase project.
 2. Open the **SQL Editor** and run the migrations in order:
-   `0001_init.sql`, `0002_admin.sql`, `0003_freeforall.sql`
-   (or `supabase db push` with the CLI).
-3. `0001` creates the `profiles`, `pixels`, `reports`, `admin_audit_logs`
-   tables, the `leaderboard_placed` / `leaderboard_destroyed` views, RLS
-   policies, and adds `pixels` to the realtime publication. `0002` adds the
-   admin secret store + God Mode RPCs. `0003` switches gameplay to free-for-all
-   (no cooldown), adds batch placement + the hover card RPC, and makes reports
-   one-per-user with no auto-purge.
+   `0001_init.sql`, `0002_admin.sql`, `0003_freeforall.sql`,
+   `0004_bigboard.sql`, `0005_bots.sql` (or `supabase db push` with the CLI).
+3. What each adds: `0001` tables/views/RLS/realtime; `0002` admin secret +
+   God Mode RPCs; `0003` free-for-all gameplay + batch placement + hover card +
+   one-report-per-user; `0004` widens the board to 30,000×30,000; `0005` seeds
+   the autonomous bots and schedules them via `pg_cron`.
 4. **Set your admin secret** (one time) so `/admin` can unlock:
    ```sql
    insert into admin_secrets (id, token) values (1, 'YOUR_LONG_RANDOM_TOKEN')
@@ -83,6 +88,29 @@ Open http://localhost:5173.
 - **Hover any pixel** to highlight every cell owned by that user (a stable
   per-user color tint) and see their name + leaderboard rank.
 - Counts are still tracked per user to drive the live leaderboard.
+
+## Bots (`0005_bots.sql`)
+
+Autonomous bots run **server-side** via `pg_cron` (every 5s), so the board keeps
+moving with nobody watching. Each owns a `profiles` row (shows on the
+leaderboard + hover card) and builds its art up gradually for a lifelike feel:
+
+- **spammer** — scatters pixels in a drifting blob
+- **walker** — random-walk trail (organic squiggle)
+- **spiral** — expanding geometric spiral
+- **flagger** — draws a striped national flag row by row, then relocates
+
+They're seeded near the board centre (≈15000, 15000). Controls:
+
+```sql
+select bot_tick();                         -- step once manually (if no pg_cron)
+update bots set active = false;            -- pause all bots
+select create_bot('▰ MYBOT','spiral', 16000, 16000, 6, array['#00ff9c']); -- add one
+select cron.unschedule('pixelpop-bots');   -- stop the schedule entirely
+```
+
+> `pg_cron` must be available for the schedule (Supabase: Database → Extensions).
+> If it isn't, the migration still succeeds — just call `bot_tick()` yourself.
 
 ## Moderation & `/admin` God Mode
 

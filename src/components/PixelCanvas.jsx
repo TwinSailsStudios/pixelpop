@@ -81,33 +81,51 @@ export default function PixelCanvas({ uuid, tool, color, fill, boardBg, onColorP
     })
   }, [])
 
-  const { offscreenRef, ready, applyCell, clearCell, sample, ownerAt, cellsOf } =
+  const { ready, applyCell, clearCell, sample, ownerAt, cellsOf, forEachIn } =
     usePixels(requestRender)
 
   // ---- rendering -----------------------------------------------------------
+  // Draw only the cells inside the viewport, in screen space (each at least 1px
+  // so art stays visible when zoomed far out of the 30k board).
   const render = useCallback(() => {
     const canvas = canvasRef.current
-    const off = offscreenRef.current
-    if (!canvas || !off) return
+    if (!canvas) return
     const ctx = canvas.getContext('2d')
     const { scale, ox, oy } = view.current
+    const W = canvas.width
+    const H = canvas.height
 
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.imageSmoothingEnabled = false
     ctx.fillStyle = boardBg || VOID_COLOR
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.fillRect(0, 0, W, H)
 
-    ctx.setTransform(scale, 0, 0, scale, ox, oy)
-    ctx.drawImage(off, 0, 0)
+    const minX = Math.max(0, Math.floor(-ox / scale))
+    const maxX = Math.min(GRID - 1, Math.floor((W - ox) / scale))
+    const minY = Math.max(0, Math.floor(-oy / scale))
+    const maxY = Math.min(GRID - 1, Math.floor((H - oy) / scale))
+    const px = Math.max(1, Math.ceil(scale))
+    const sx = (x) => Math.round(x * scale + ox)
+    const sy = (y) => Math.round(y * scale + oy)
 
-    // highlight every pixel owned by the hovered user
+    forEachIn(minX, minY, maxX, maxY, (x, y, color) => {
+      ctx.fillStyle = color
+      ctx.fillRect(sx(x), sy(y), px, px)
+    })
+
+    // highlight every (visible) pixel owned by the hovered user
     const hov = hover.current
     if (hov.owner && hov.tint) {
       const set = cellsOf(hov.owner)
       if (set) {
         ctx.fillStyle = hov.tint
+        let drawn = 0
         for (const k of set) {
           const i = k.indexOf(',')
-          ctx.fillRect(+k.slice(0, i), +k.slice(i + 1), 1, 1)
+          const x = +k.slice(0, i)
+          const y = +k.slice(i + 1)
+          if (x >= minX && x <= maxX && y >= minY && y <= maxY) ctx.fillRect(sx(x), sy(y), px, px)
+          if (++drawn > 60000) break
         }
       }
     }
@@ -120,34 +138,28 @@ export default function PixelCanvas({ uuid, tool, color, fill, boardBg, onColorP
         : rectCells(s.start, hoverCell.current, fill)
       ctx.globalAlpha = 0.7
       ctx.fillStyle = color
-      for (const c of cells) ctx.fillRect(c.x, c.y, 1, 1)
+      for (const c of cells) ctx.fillRect(sx(c.x), sy(c.y), px, px)
       ctx.globalAlpha = 1
     }
 
     // grid lines
     if (scale >= 6) {
-      ctx.setTransform(1, 0, 0, 1, 0, 0)
       ctx.strokeStyle = 'rgba(127,127,127,0.18)'
       ctx.lineWidth = 1
       ctx.beginPath()
-      const startX = Math.max(0, Math.floor(-ox / scale))
-      const endX = Math.min(GRID, Math.ceil((canvas.width - ox) / scale))
-      const startY = Math.max(0, Math.floor(-oy / scale))
-      const endY = Math.min(GRID, Math.ceil((canvas.height - oy) / scale))
-      for (let gx = startX; gx <= endX; gx++) {
-        const sx = Math.round(gx * scale + ox) + 0.5
-        ctx.moveTo(sx, startY * scale + oy)
-        ctx.lineTo(sx, endY * scale + oy)
+      for (let gx = minX; gx <= maxX + 1; gx++) {
+        const lx = sx(gx) + 0.5
+        ctx.moveTo(lx, sy(minY))
+        ctx.lineTo(lx, sy(maxY + 1))
       }
-      for (let gy = startY; gy <= endY; gy++) {
-        const sy = Math.round(gy * scale + oy) + 0.5
-        ctx.moveTo(startX * scale + ox, sy)
-        ctx.lineTo(endX * scale + ox, sy)
+      for (let gy = minY; gy <= maxY + 1; gy++) {
+        const ly = sy(gy) + 0.5
+        ctx.moveTo(sx(minX), ly)
+        ctx.lineTo(sx(maxX + 1), ly)
       }
       ctx.stroke()
     }
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-  }, [offscreenRef, boardBg, tool, color, fill, cellsOf])
+  }, [boardBg, tool, color, fill, cellsOf, forEachIn])
   renderRef.current = render
 
   // re-render when the theme / tool / color changes
