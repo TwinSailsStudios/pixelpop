@@ -1,5 +1,12 @@
 export const GRID = 1000 // 1000 x 1000 cells
+
+// Sentinel meaning "empty cell" — voids aren't stored as a color, they're
+// erased to transparent in the offscreen buffer so the themed board background
+// shows through (see usePixels / PixelCanvas).
 export const VOID_COLOR = '#0a0a0b'
+
+// Visible board background per theme (matches --c-void in index.css).
+export const BOARD_BG = { dark: '#0a0a0b', light: '#f4f4f5' }
 
 // Zoom limits (canvas pixels per grid cell)
 export const MIN_SCALE = 0.4

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { usePixels } from '../hooks/usePixels'
 import { supabase } from '../lib/supabase'
 import {
@@ -9,70 +9,80 @@ import {
   VOID_COLOR,
 } from '../lib/constants'
 
-/**
- * A small ring that hugs the cursor and fills as the next pixel charge banks.
- * Green + center count when ready to act, muted while on cooldown. Positioned
- * imperatively by the parent (see ringRef) so mouse-move never re-renders React.
- */
-function CursorRing({ econ, color, tool }) {
-  const D = 42
-  const stroke = 4
-  const r = (D - stroke) / 2
-  const circ = 2 * Math.PI * r
-  const ready = (econ?.floor ?? 0) >= 1
-  const progress = econ?.full ? 1 : econ?.fraction ?? 0
-  const arc = ready ? '#00ff9c' : '#6b6b73'
-  const tinted = tool === 'place' && ready ? color : arc
+// --- geometry --------------------------------------------------------------
+function lineCells(a, b) {
+  const cells = []
+  let x0 = a.x
+  let y0 = a.y
+  const dx = Math.abs(b.x - x0)
+  const dy = -Math.abs(b.y - y0)
+  const sx = x0 < b.x ? 1 : -1
+  const sy = y0 < b.y ? 1 : -1
+  let err = dx + dy
+  for (;;) {
+    cells.push({ x: x0, y: y0 })
+    if (x0 === b.x && y0 === b.y) break
+    const e2 = 2 * err
+    if (e2 >= dy) { err += dy; x0 += sx }
+    if (e2 <= dx) { err += dx; y0 += sy }
+    if (cells.length > 20000) break
+  }
+  return cells
+}
 
-  return (
-    <svg
-      width={D}
-      height={D}
-      className="absolute -translate-x-1/2 -translate-y-1/2"
-      style={{ overflow: 'visible' }}
-    >
-      <circle cx={D / 2} cy={D / 2} r={r} fill="none"
-        stroke="rgba(255,255,255,0.12)" strokeWidth={stroke} />
-      <circle cx={D / 2} cy={D / 2} r={r} fill="none" stroke={tinted}
-        strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circ}
-        strokeDashoffset={circ * (1 - progress)}
-        transform={`rotate(-90 ${D / 2} ${D / 2})`}
-        style={{ transition: 'stroke-dashoffset 200ms linear' }} />
-      <text x={D / 2} y={D / 2} textAnchor="middle" dominantBaseline="central"
-        fontSize="12" fontFamily="monospace"
-        fill={ready ? '#e6e6e6' : '#6b6b73'}>
-        {econ?.floor ?? 0}
-      </text>
-    </svg>
-  )
+function rectCells(a, b, filled) {
+  const lx = Math.min(a.x, b.x), hx = Math.max(a.x, b.x)
+  const ly = Math.min(a.y, b.y), hy = Math.max(a.y, b.y)
+  const cells = []
+  if (filled) {
+    for (let x = lx; x <= hx; x++)
+      for (let y = ly; y <= hy; y++) {
+        cells.push({ x, y })
+        if (cells.length > 20000) return cells // guard runaway fills
+      }
+    return cells
+  }
+  for (let x = lx; x <= hx; x++) { cells.push({ x, y: ly }); cells.push({ x, y: hy }) }
+  for (let y = ly + 1; y < hy; y++) { cells.push({ x: lx, y }); cells.push({ x: hx, y }) }
+  return cells
+}
+
+// Stable pseudo-random tint per user so highlighting is consistent.
+function tintFor(id) {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
+  return `hsla(${h % 360}, 90%, 55%, 0.5)`
 }
 
 /**
- * The 1000x1000 board. Renders an offscreen buffer onto a viewport-sized
- * canvas with a pan/zoom transform. Pointer interactions are routed through
- * the active tool (paint / destroy / eyedropper / report).
+ * The 1000x1000 board. Offscreen buffer blitted with a pan/zoom transform.
+ * Tools: place / line / square / destroy / eyedropper / report. Hovering a
+ * pixel highlights every cell owned by that user and shows their leaderboard card.
  */
-export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onResult }) {
+export default function PixelCanvas({ uuid, tool, color, fill, boardBg, onColorPick, onResult }) {
   const canvasRef = useRef(null)
-  const ringRef = useRef(null)
   const frameRef = useRef(0)
+  const renderRef = useRef(null)
 
-  // View transform: grid->screen. scale = screen px per grid cell.
   const view = useRef({ scale: DEFAULT_SCALE, ox: 0, oy: 0 })
-  const drag = useRef(null) // { x, y, moved } while panning
-  // Pending destroy selection (needs 2 cells).
-  const destroyBuf = useRef([])
+  const drag = useRef(null)
+  const shape = useRef({ start: null })          // line/square anchor
+  const hoverCell = useRef({ x: -1, y: -1 })
+  const hover = useRef({ owner: null, tint: null }) // highlighted user
+  const cardCache = useRef(new Map())
+  const [hoverCard, setHoverCard] = useState(null)
 
+  // Calls the latest render via a ref so tool/color/theme changes aren't stale.
   const requestRender = useCallback(() => {
     if (frameRef.current) return
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = 0
-      render()
+      renderRef.current?.()
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const { offscreenRef, ready, paint, sample } = usePixels(requestRender)
+  const { offscreenRef, ready, applyCell, clearCell, sample, ownerAt, cellsOf } =
+    usePixels(requestRender)
 
   // ---- rendering -----------------------------------------------------------
   const render = useCallback(() => {
@@ -83,16 +93,41 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
     const { scale, ox, oy } = view.current
 
     ctx.imageSmoothingEnabled = false
-    ctx.fillStyle = VOID_COLOR
+    ctx.fillStyle = boardBg || VOID_COLOR
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
     ctx.setTransform(scale, 0, 0, scale, ox, oy)
     ctx.drawImage(off, 0, 0)
 
-    // Subtle grid lines once we're zoomed in enough to see cells clearly.
+    // highlight every pixel owned by the hovered user
+    const hov = hover.current
+    if (hov.owner && hov.tint) {
+      const set = cellsOf(hov.owner)
+      if (set) {
+        ctx.fillStyle = hov.tint
+        for (const k of set) {
+          const i = k.indexOf(',')
+          ctx.fillRect(+k.slice(0, i), +k.slice(i + 1), 1, 1)
+        }
+      }
+    }
+
+    // live preview for the line / square tools
+    const s = shape.current
+    if (s.start && (tool === 'line' || tool === 'square')) {
+      const cells = tool === 'line'
+        ? lineCells(s.start, hoverCell.current)
+        : rectCells(s.start, hoverCell.current, fill)
+      ctx.globalAlpha = 0.7
+      ctx.fillStyle = color
+      for (const c of cells) ctx.fillRect(c.x, c.y, 1, 1)
+      ctx.globalAlpha = 1
+    }
+
+    // grid lines
     if (scale >= 6) {
       ctx.setTransform(1, 0, 0, 1, 0, 0)
-      ctx.strokeStyle = 'rgba(255,255,255,0.05)'
+      ctx.strokeStyle = 'rgba(127,127,127,0.18)'
       ctx.lineWidth = 1
       ctx.beginPath()
       const startX = Math.max(0, Math.floor(-ox / scale))
@@ -112,7 +147,19 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
       ctx.stroke()
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0)
-  }, [offscreenRef])
+  }, [offscreenRef, boardBg, tool, color, fill, cellsOf])
+  renderRef.current = render
+
+  // re-render when the theme / tool / color changes
+  useEffect(() => {
+    requestRender()
+  }, [boardBg, tool, color, requestRender])
+
+  // clearing the shape anchor when switching tools
+  useEffect(() => {
+    shape.current.start = null
+    requestRender()
+  }, [tool, requestRender])
 
   // ---- sizing --------------------------------------------------------------
   useEffect(() => {
@@ -124,7 +171,6 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
       canvas.height = Math.floor(rect.height * dpr)
       canvas.style.width = rect.width + 'px'
       canvas.style.height = rect.height + 'px'
-      // Center the board on first layout.
       if (view.current.ox === 0 && view.current.oy === 0) {
         const s = view.current.scale
         view.current.ox = canvas.width / 2 - (GRID * s) / 2
@@ -157,55 +203,159 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
   }, [])
 
   // ---- zoom / pan ----------------------------------------------------------
-  const onWheel = useCallback(
-    (e) => {
-      e.preventDefault()
+  const zoomAt = useCallback(
+    (factor, px, py) => {
       const canvas = canvasRef.current
-      const rect = canvas.getBoundingClientRect()
-      const dpr = canvas.width / rect.width
-      const px = (e.clientX - rect.left) * dpr
-      const py = (e.clientY - rect.top) * dpr
+      if (!canvas) return
+      const cx = px ?? canvas.width / 2
+      const cy = py ?? canvas.height / 2
       const v = view.current
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
       const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor))
-      // Keep the cursor anchored to the same grid point while zooming.
-      v.ox = px - (px - v.ox) * (next / v.scale)
-      v.oy = py - (py - v.oy) * (next / v.scale)
+      v.ox = cx - (cx - v.ox) * (next / v.scale)
+      v.oy = cy - (cy - v.oy) * (next / v.scale)
       v.scale = next
       requestRender()
     },
     [requestRender]
   )
 
-  // Move the cooldown ring to the cursor. Imperative (no React state) so this
-  // can fire on every pointer move without re-rendering. `transform` is owned
-  // here, never in JSX, so React re-renders won't clobber it.
-  const moveRing = useCallback((clientX, clientY) => {
-    const el = ringRef.current
-    const canvas = canvasRef.current
-    if (!el || !canvas) return
-    const rect = canvas.getBoundingClientRect()
-    el.style.transform = `translate(${clientX - rect.left}px, ${clientY - rect.top}px)`
-    el.style.opacity = '1'
-  }, [])
-
-  // Hide the ring until the pointer first enters.
-  useEffect(() => {
-    if (ringRef.current) ringRef.current.style.opacity = '0'
-  }, [])
-
-  const onPointerDown = useCallback(
+  const onWheel = useCallback(
     (e) => {
-      moveRing(e.clientX, e.clientY)
-      drag.current = { x: e.clientX, y: e.clientY, moved: false }
-      e.currentTarget.setPointerCapture?.(e.pointerId)
+      e.preventDefault()
+      const canvas = canvasRef.current
+      const rect = canvas.getBoundingClientRect()
+      const dpr = canvas.width / rect.width
+      zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, (e.clientX - rect.left) * dpr, (e.clientY - rect.top) * dpr)
     },
-    [moveRing]
+    [zoomAt]
   )
+
+  // ---- hover card (owner display name + rank), cached per user -------------
+  const loadCard = useCallback(async (owner) => {
+    if (cardCache.current.has(owner)) {
+      if (hover.current.owner === owner) setHoverCard(cardCache.current.get(owner))
+      return
+    }
+    const { data } = await supabase.rpc('user_card', { p_id: owner })
+    cardCache.current.set(owner, data)
+    if (hover.current.owner === owner) setHoverCard(data)
+  }, [])
+
+  const updateHover = useCallback(
+    (gx, gy) => {
+      if (gx < 0 || gy < 0 || gx >= GRID || gy >= GRID) return
+      hoverCell.current = { x: gx, y: gy }
+      const owner = ownerAt(gx, gy)
+      if (owner !== hover.current.owner) {
+        hover.current.owner = owner
+        hover.current.tint = owner ? tintFor(owner) : null
+        if (owner) loadCard(owner)
+        else setHoverCard(null)
+        requestRender()
+      } else if (shape.current.start) {
+        requestRender() // refresh shape preview as the cursor moves
+      }
+    },
+    [ownerAt, loadCard, requestRender]
+  )
+
+  const clearHover = useCallback(() => {
+    hover.current = { owner: null, tint: null }
+    setHoverCard(null)
+    requestRender()
+  }, [requestRender])
+
+  // ---- tool actions --------------------------------------------------------
+  const act = useCallback(
+    async (gx, gy) => {
+      if (gx < 0 || gy < 0 || gx >= GRID || gy >= GRID) return
+
+      if (tool === 'eyedropper') {
+        const c = sample(gx, gy)
+        if (c !== VOID_COLOR) onColorPick?.(c)
+        return
+      }
+
+      if (tool === 'report') {
+        const { data } = await supabase.rpc('report_pixel', {
+          p_reporter: uuid,
+          p_x: gx,
+          p_y: gy,
+        })
+        onResult?.(data)
+        return
+      }
+
+      if (tool === 'destroy') {
+        const prevC = sample(gx, gy)
+        const prevO = ownerAt(gx, gy)
+        clearCell(gx, gy) // optimistic
+        const { data } = await supabase.rpc('destroy_pixels', {
+          p_id: uuid,
+          p_coords: [{ x: gx, y: gy }],
+        })
+        if (!data || data.ok === false) applyCell(gx, gy, prevC, prevO)
+        onResult?.(data)
+        return
+      }
+
+      if (tool === 'line' || tool === 'square') {
+        if (!shape.current.start) {
+          shape.current.start = { x: gx, y: gy }
+          onResult?.({ ok: true, info: `${tool} anchored — click the end point` })
+          requestRender()
+          return
+        }
+        const cells =
+          tool === 'line'
+            ? lineCells(shape.current.start, { x: gx, y: gy })
+            : rectCells(shape.current.start, { x: gx, y: gy }, fill)
+        shape.current.start = null
+        const prevs = cells.map((c) => ({
+          ...c,
+          prevC: sample(c.x, c.y),
+          prevO: ownerAt(c.x, c.y),
+        }))
+        cells.forEach((c) => applyCell(c.x, c.y, color, uuid)) // optimistic
+        const { data } = await supabase.rpc('place_pixels', {
+          p_id: uuid,
+          p_cells: cells.map((c) => ({ x: c.x, y: c.y, color })),
+        })
+        if (!data || data.ok === false) {
+          prevs.forEach((p) => applyCell(p.x, p.y, p.prevC, p.prevO))
+        }
+        onResult?.(data)
+        requestRender()
+        return
+      }
+
+      // default: place a single pixel
+      const prevC = sample(gx, gy)
+      const prevO = ownerAt(gx, gy)
+      applyCell(gx, gy, color, uuid) // optimistic
+      const { data } = await supabase.rpc('place_pixel', {
+        p_id: uuid,
+        p_x: gx,
+        p_y: gy,
+        p_color: color,
+      })
+      if (!data || data.ok === false) applyCell(gx, gy, prevC, prevO)
+      onResult?.(data)
+    },
+    [tool, color, fill, uuid, sample, ownerAt, applyCell, clearCell, onColorPick, onResult, requestRender]
+  )
+
+  // ---- pointer handlers ----------------------------------------------------
+  const onPointerDown = useCallback((e) => {
+    drag.current = { x: e.clientX, y: e.clientY, moved: false }
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+  }, [])
 
   const onPointerMove = useCallback(
     (e) => {
-      moveRing(e.clientX, e.clientY)
+      const { x, y } = toGrid(e.clientX, e.clientY)
+      updateHover(x, y)
+
       const d = drag.current
       if (!d) return
       const dx = e.clientX - d.x
@@ -221,77 +371,7 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
         requestRender()
       }
     },
-    [requestRender, moveRing]
-  )
-
-  // ---- tool actions --------------------------------------------------------
-  // Mutations paint the offscreen buffer immediately (optimistic) and roll back
-  // if the server rejects the call. The economy bank is spent/refunded in step.
-  const act = useCallback(
-    async (gx, gy) => {
-      if (gx < 0 || gy < 0 || gx >= GRID || gy >= GRID) return
-
-      if (tool === 'eyedropper') {
-        onColorPick?.(sample(gx, gy))
-        return
-      }
-
-      if (tool === 'report') {
-        // A purge is reflected by realtime DELETE events repainting the cells.
-        const { data } = await supabase.rpc('report_pixel', {
-          p_reporter: uuid,
-          p_x: gx,
-          p_y: gy,
-        })
-        onResult?.(data)
-        return
-      }
-
-      if (tool === 'destroy') {
-        destroyBuf.current.push({ x: gx, y: gy, prev: sample(gx, gy) })
-        if (destroyBuf.current.length < 2) {
-          onResult?.({ ok: true, info: 'select 1 more pixel to destroy' })
-          return
-        }
-        const batch = destroyBuf.current.slice(0, 2)
-        destroyBuf.current = []
-        if (!econ?.trySpend(1)) {
-          onResult?.({ ok: false, error: 'cooldown' })
-          return
-        }
-        batch.forEach((b) => paint(b.x, b.y, VOID_COLOR)) // optimistic
-        const { data } = await supabase.rpc('destroy_pixels', {
-          p_id: uuid,
-          p_coords: batch.map(({ x, y }) => ({ x, y })),
-        })
-        if (!data || data.ok === false) {
-          batch.forEach((b) => paint(b.x, b.y, b.prev)) // revert
-          econ?.refund(1)
-        }
-        onResult?.(data)
-        return
-      }
-
-      // default: place
-      const prev = sample(gx, gy)
-      if (!econ?.trySpend(1)) {
-        onResult?.({ ok: false, error: 'cooldown' })
-        return
-      }
-      paint(gx, gy, color) // optimistic
-      const { data } = await supabase.rpc('place_pixel', {
-        p_id: uuid,
-        p_x: gx,
-        p_y: gy,
-        p_color: color,
-      })
-      if (!data || data.ok === false) {
-        paint(gx, gy, prev) // revert
-        econ?.refund(1)
-      }
-      onResult?.(data)
-    },
-    [tool, color, uuid, sample, paint, econ, onColorPick, onResult]
+    [toGrid, updateHover, requestRender]
   )
 
   const onPointerUp = useCallback(
@@ -306,14 +386,11 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
     [toGrid, act]
   )
 
-  // Crosshair everywhere: the ring's center marks the exact target cell.
-  const cursor = 'crosshair'
-
   return (
     <div className="relative h-full w-full overflow-hidden bg-void">
       <canvas
         ref={canvasRef}
-        style={{ cursor, touchAction: 'none' }}
+        style={{ cursor: 'crosshair', touchAction: 'none' }}
         className="block h-full w-full"
         onWheel={onWheel}
         onPointerDown={onPointerDown}
@@ -321,13 +398,37 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
         onPointerUp={onPointerUp}
         onPointerLeave={() => {
           drag.current = null
-          if (ringRef.current) ringRef.current.style.opacity = '0'
+          clearHover()
         }}
       />
 
-      {/* cooldown ring — positioned imperatively via ringRef (no style in JSX) */}
-      <div ref={ringRef} className="pointer-events-none absolute left-0 top-0 z-10">
-        <CursorRing econ={econ} color={color} tool={tool} />
+      {/* hovered user's card */}
+      {hoverCard && (
+        <div className="pointer-events-none absolute left-2 top-2 z-20 rounded border border-edge bg-panel/90 px-3 py-2 text-xs backdrop-blur">
+          <div className="text-ink">{hoverCard.display_name}</div>
+          <div className="text-muted">
+            #{hoverCard.rank} · {hoverCard.pixels_placed} placed ·{' '}
+            {hoverCard.pixels_destroyed} destroyed
+          </div>
+        </div>
+      )}
+
+      {/* zoom controls */}
+      <div className="absolute bottom-3 right-3 z-20 flex flex-col gap-1">
+        <button
+          onClick={() => zoomAt(1.4)}
+          title="Zoom in"
+          className="h-9 w-9 rounded border border-edge bg-panel/90 text-lg leading-none text-ink backdrop-blur hover:border-accent hover:text-accent"
+        >
+          +
+        </button>
+        <button
+          onClick={() => zoomAt(1 / 1.4)}
+          title="Zoom out"
+          className="h-9 w-9 rounded border border-edge bg-panel/90 text-lg leading-none text-ink backdrop-blur hover:border-accent hover:text-accent"
+        >
+          −
+        </button>
       </div>
 
       {!ready && (

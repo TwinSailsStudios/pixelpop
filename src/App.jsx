@@ -6,25 +6,21 @@ import Leaderboard from './components/Leaderboard'
 import DiscordCTA from './components/DiscordCTA'
 import NameModal from './components/NameModal'
 import { useUser } from './hooks/useUser'
-import { useEconomy } from './hooks/useEconomy'
+import { useTheme } from './hooks/useTheme'
+import { BOARD_BG } from './lib/constants'
 
 const RECENT_KEY = 'pixelpop_recent_colors'
 
 export default function App() {
   const { uuid, profile, setDisplayName } = useUser()
-  const econ = useEconomy()
+  const { theme, toggle } = useTheme()
   const [tool, setTool] = useState('place')
   const [color, setColor] = useState('#00ff9c')
+  const [fill, setFill] = useState(false)
   const [recent, setRecent] = useState(
     () => JSON.parse(localStorage.getItem(RECENT_KEY) || '[]')
   )
   const [status, setStatus] = useState('')
-
-  // Seed the client economy from the freshly loaded profile.
-  useEffect(() => {
-    if (profile) econ.applyProfile(profile)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.id])
 
   const pushRecent = useCallback((c) => {
     setRecent((prev) => {
@@ -34,25 +30,16 @@ export default function App() {
     })
   }, [])
 
-  // Every RPC result re-anchors the authoritative economy and updates status.
-  const onResult = useCallback(
-    (data) => {
-      econ.applyServer(data)
-      if (!data) return setStatus('network error')
-      if (data.ok === false) {
-        return setStatus(
-          data.error === 'cooldown' ? 'on cooldown — banking pixels…' : data.error
-        )
-      }
-      if (data.info) return setStatus(data.info)
-      if (data.purged) return setStatus('user purged (10+ reports)')
-      if (data.removed != null) return setStatus(`destroyed ${data.removed} pixel(s)`)
-      if (typeof data.reports === 'number')
-        return setStatus(`reported (${data.reports}/10)`)
-      return setStatus('placed')
-    },
-    [econ]
-  )
+  const onResult = useCallback((data) => {
+    if (!data) return setStatus('network error')
+    if (data.ok === false) return setStatus(data.error)
+    if (data.already) return setStatus('you already reported this user')
+    if (data.info) return setStatus(data.info)
+    if (typeof data.reports === 'number') return setStatus(`reported (${data.reports} total)`)
+    if (data.removed != null) return setStatus(`destroyed ${data.removed} pixel(s)`)
+    if (data.count != null) return setStatus(`placed ${data.count} pixel(s)`)
+    return setStatus('placed')
+  }, [])
 
   const onColorPick = useCallback(
     (c) => {
@@ -64,54 +51,55 @@ export default function App() {
     [pushRecent]
   )
 
-  // Track palette use for the "recent" row.
   useEffect(() => {
     if (color) pushRecent(color)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [color])
 
+  const controls = (
+    <>
+      <NameModal current={profile?.display_name} onSave={setDisplayName} />
+      <button
+        onClick={toggle}
+        title="Toggle light / dark"
+        className="rounded border border-edge px-2 py-1.5 text-xs text-muted hover:border-accent hover:text-accent"
+      >
+        {theme === 'dark' ? '☀ LIGHT' : '☾ DARK'}
+      </button>
+      <DiscordCTA />
+      <Link to="/admin" className="text-[10px] text-muted hover:text-ink">
+        admin
+      </Link>
+    </>
+  )
+
   return (
     <div className="flex h-screen flex-col">
-      {/* header */}
-      <header className="flex items-center justify-between gap-4 border-b border-edge bg-panel px-4 py-2">
-        <div className="flex items-baseline gap-3">
-          <h1 className="text-sm font-bold tracking-[0.3em] text-accent">PIXELPOP</h1>
-          <span className="hidden text-[10px] text-muted sm:inline">// territory war</span>
-        </div>
-        <div className="flex items-center gap-3">
-          <NameModal current={profile?.display_name} onSave={setDisplayName} />
-          <DiscordCTA />
-          <Link
-            to="/admin"
-            className="hidden text-[10px] text-muted hover:text-ink sm:inline"
-          >
-            admin
-          </Link>
-        </div>
-      </header>
-
       <Toolbar
         tool={tool}
         setTool={setTool}
         color={color}
         setColor={setColor}
         recent={recent}
-        econ={econ}
+        fill={fill}
+        setFill={setFill}
+        controls={controls}
       />
 
-      {/* main */}
+      {/* board takes the rest of the screen */}
       <div className="flex min-h-0 flex-1">
         <main className="relative min-h-0 flex-1">
           <PixelCanvas
             uuid={uuid}
             tool={tool}
             color={color}
-            econ={econ}
+            fill={fill}
+            boardBg={BOARD_BG[theme] || BOARD_BG.dark}
             onColorPick={onColorPick}
             onResult={onResult}
           />
-          <div className="pointer-events-none absolute bottom-2 left-2 rounded bg-void/70 px-2 py-1 text-[10px] text-muted">
-            {status || 'scroll to zoom · drag to pan · click to act'}
+          <div className="pointer-events-none absolute bottom-2 left-2 z-10 rounded bg-void/70 px-2 py-1 text-[10px] text-muted">
+            {status || 'scroll/buttons to zoom · drag to pan · hover a pixel to see its owner'}
           </div>
         </main>
         <Leaderboard />

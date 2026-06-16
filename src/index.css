@@ -2,8 +2,28 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: dark;
+/* Palette is defined as CSS variables and swapped by the .dark / .light class
+   on <html>, so every Tailwind color token (and the canvas board background)
+   re-themes from one toggle. */
+:root,
+.dark {
+  --c-void: #0a0a0b;
+  --c-panel: #111114;
+  --c-edge: #1f1f24;
+  --c-ink: #e6e6e6;
+  --c-muted: #6b6b73;
+  --c-accent: #00ff9c;
+  --c-danger: #ff4d4d;
+}
+
+.light {
+  --c-void: #f4f4f5;
+  --c-panel: #ffffff;
+  --c-edge: #d4d4d8;
+  --c-ink: #18181b;
+  --c-muted: #71717a;
+  --c-accent: #009e62;
+  --c-danger: #dc2626;
 }
 
 html,

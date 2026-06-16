@@ -195,7 +195,7 @@ function Dashboard({ token, onLock }) {
           </div>
         </Section>
 
-        <Section title="FORCE-WIPE — clear an area (bypass reports)">
+        <Section title="FORCE-WIPE — clear a rectangular area">
           <div className="grid grid-cols-2 gap-2">
             {['x1', 'y1', 'x2', 'y2'].map((k) => (
               <input
