@@ -59,7 +59,7 @@ function tintFor(id) {
  * Tools: place / line / square / destroy / eyedropper / report. Hovering a
  * pixel highlights every cell owned by that user and shows their leaderboard card.
  */
-export default function PixelCanvas({ uuid, tool, color, fill, boardBg, onColorPick, onResult }) {
+export default function PixelCanvas({ uuid, tool, color, fill, boardBg, borderBg, onColorPick, onResult }) {
   const canvasRef = useRef(null)
   const frameRef = useRef(0)
   const renderRef = useRef(null)
@@ -117,8 +117,17 @@ export default function PixelCanvas({ uuid, tool, color, fill, boardBg, onColorP
 
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.imageSmoothingEnabled = false
-    ctx.fillStyle = boardBg || VOID_COLOR
+
+    // Out-of-bounds "border" fills the whole canvas; the board area is painted
+    // on top in its own color so you can see where the grid ends.
+    ctx.fillStyle = borderBg || boardBg || VOID_COLOR
     ctx.fillRect(0, 0, W, H)
+    const bx = Math.round(ox)
+    const by = Math.round(oy)
+    const bw = Math.round(GRID * scale)
+    const bh = Math.round(GRID * scale)
+    ctx.fillStyle = boardBg || VOID_COLOR
+    ctx.fillRect(bx, by, bw, bh)
 
     const minX = Math.max(0, Math.floor(-ox / scale))
     const maxX = Math.min(GRID - 1, Math.floor((W - ox) / scale))
@@ -179,7 +188,12 @@ export default function PixelCanvas({ uuid, tool, color, fill, boardBg, onColorP
       }
       ctx.stroke()
     }
-  }, [boardBg, tool, color, fill, cellsOf, forEachIn])
+
+    // crisp frame around the board edge
+    ctx.strokeStyle = 'rgba(127,127,127,0.55)'
+    ctx.lineWidth = 1
+    ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1)
+  }, [boardBg, borderBg, tool, color, fill, cellsOf, forEachIn])
   renderRef.current = render
 
   // re-render when the theme / tool / color changes

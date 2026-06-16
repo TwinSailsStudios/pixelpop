@@ -7,6 +7,10 @@ export const VOID_COLOR = '#0a0a0b'
 // Visible board background per theme (matches --c-void in index.css).
 export const BOARD_BG = { dark: '#0a0a0b', light: '#f4f4f5' }
 
+// The area *outside* the board bounds (the "border" surrounding the grid),
+// kept distinct from the board so you can see where the board ends.
+export const BORDER_BG = { dark: '#1b1b21', light: '#d6d6db' }
+
 // Zoom limits (canvas pixels per grid cell)
 export const MIN_SCALE = 0.02 // zoom right out to see the whole 30k board
 export const MAX_SCALE = 40

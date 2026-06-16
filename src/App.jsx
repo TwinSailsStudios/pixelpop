@@ -7,7 +7,7 @@ import DiscordCTA from './components/DiscordCTA'
 import NameModal from './components/NameModal'
 import { useUser } from './hooks/useUser'
 import { useTheme } from './hooks/useTheme'
-import { BOARD_BG } from './lib/constants'
+import { BOARD_BG, BORDER_BG } from './lib/constants'
 
 const RECENT_KEY = 'pixelpop_recent_colors'
 
@@ -95,6 +95,7 @@ export default function App() {
             color={color}
             fill={fill}
             boardBg={BOARD_BG[theme] || BOARD_BG.dark}
+            borderBg={BORDER_BG[theme] || BORDER_BG.dark}
             onColorPick={onColorPick}
             onResult={onResult}
           />
