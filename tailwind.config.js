@@ -4,14 +4,15 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Brutalist / terminal palette
-        void: '#0a0a0b',
-        panel: '#111114',
-        edge: '#1f1f24',
-        ink: '#e6e6e6',
-        muted: '#6b6b73',
-        accent: '#00ff9c',
-        danger: '#ff4d4d',
+        // Brutalist / terminal palette, driven by CSS vars so the whole UI
+        // (and the board background) follows the light/dark toggle.
+        void: 'var(--c-void)',
+        panel: 'var(--c-panel)',
+        edge: 'var(--c-edge)',
+        ink: 'var(--c-ink)',
+        muted: 'var(--c-muted)',
+        accent: 'var(--c-accent)',
+        danger: 'var(--c-danger)',
       },
       fontFamily: {
         mono: ['"JetBrains Mono"', '"Fira Code"', 'ui-monospace', 'monospace'],

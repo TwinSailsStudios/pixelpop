@@ -21,7 +21,7 @@ function CursorRing({ econ, color, tool }) {
   const circ = 2 * Math.PI * r
   const ready = (econ?.floor ?? 0) >= 1
   const progress = econ?.full ? 1 : econ?.fraction ?? 0
-  const arc = ready ? '#00ff9c' : '#6b6b73'
+  const arc = ready ? 'var(--c-accent)' : 'var(--c-muted)'
   const tinted = tool === 'place' && ready ? color : arc
 
   return (
@@ -32,7 +32,7 @@ function CursorRing({ econ, color, tool }) {
       style={{ overflow: 'visible' }}
     >
       <circle cx={D / 2} cy={D / 2} r={r} fill="none"
-        stroke="rgba(255,255,255,0.12)" strokeWidth={stroke} />
+        stroke="rgba(127,127,127,0.25)" strokeWidth={stroke} />
       <circle cx={D / 2} cy={D / 2} r={r} fill="none" stroke={tinted}
         strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circ}
         strokeDashoffset={circ * (1 - progress)}
@@ -40,7 +40,7 @@ function CursorRing({ econ, color, tool }) {
         style={{ transition: 'stroke-dashoffset 200ms linear' }} />
       <text x={D / 2} y={D / 2} textAnchor="middle" dominantBaseline="central"
         fontSize="12" fontFamily="monospace"
-        fill={ready ? '#e6e6e6' : '#6b6b73'}>
+        fill={ready ? 'var(--c-ink)' : 'var(--c-muted)'}>
         {econ?.floor ?? 0}
       </text>
     </svg>
@@ -52,7 +52,7 @@ function CursorRing({ econ, color, tool }) {
  * canvas with a pan/zoom transform. Pointer interactions are routed through
  * the active tool (paint / destroy / eyedropper / report).
  */
-export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onResult }) {
+export default function PixelCanvas({ uuid, tool, color, econ, boardBg, onColorPick, onResult }) {
   const canvasRef = useRef(null)
   const ringRef = useRef(null)
   const frameRef = useRef(0)
@@ -83,7 +83,7 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
     const { scale, ox, oy } = view.current
 
     ctx.imageSmoothingEnabled = false
-    ctx.fillStyle = VOID_COLOR
+    ctx.fillStyle = boardBg || VOID_COLOR
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
     ctx.setTransform(scale, 0, 0, scale, ox, oy)
@@ -92,7 +92,7 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
     // Subtle grid lines once we're zoomed in enough to see cells clearly.
     if (scale >= 6) {
       ctx.setTransform(1, 0, 0, 1, 0, 0)
-      ctx.strokeStyle = 'rgba(255,255,255,0.05)'
+      ctx.strokeStyle = 'rgba(127,127,127,0.18)' // works on light + dark
       ctx.lineWidth = 1
       ctx.beginPath()
       const startX = Math.max(0, Math.floor(-ox / scale))
@@ -112,7 +112,12 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
       ctx.stroke()
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0)
-  }, [offscreenRef])
+  }, [offscreenRef, boardBg])
+
+  // Repaint when the theme (board background) changes.
+  useEffect(() => {
+    requestRender()
+  }, [boardBg, requestRender])
 
   // ---- sizing --------------------------------------------------------------
   useEffect(() => {
@@ -157,6 +162,23 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
   }, [])
 
   // ---- zoom / pan ----------------------------------------------------------
+  // Zoom about a screen point (defaults to viewport center for the buttons).
+  const zoomAt = useCallback(
+    (factor, px, py) => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const cx = px ?? canvas.width / 2
+      const cy = py ?? canvas.height / 2
+      const v = view.current
+      const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor))
+      v.ox = cx - (cx - v.ox) * (next / v.scale)
+      v.oy = cy - (cy - v.oy) * (next / v.scale)
+      v.scale = next
+      requestRender()
+    },
+    [requestRender]
+  )
+
   const onWheel = useCallback(
     (e) => {
       e.preventDefault()
@@ -232,7 +254,8 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
       if (gx < 0 || gy < 0 || gx >= GRID || gy >= GRID) return
 
       if (tool === 'eyedropper') {
-        onColorPick?.(sample(gx, gy))
+        const c = sample(gx, gy)
+        if (c !== VOID_COLOR) onColorPick?.(c) // ignore empty cells
         return
       }
 
@@ -328,6 +351,24 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
       {/* cooldown ring — positioned imperatively via ringRef (no style in JSX) */}
       <div ref={ringRef} className="pointer-events-none absolute left-0 top-0 z-10">
         <CursorRing econ={econ} color={color} tool={tool} />
+      </div>
+
+      {/* zoom controls */}
+      <div className="absolute bottom-3 right-3 z-20 flex flex-col gap-1">
+        <button
+          onClick={() => zoomAt(1.4)}
+          title="Zoom in"
+          className="h-9 w-9 rounded border border-edge bg-panel/90 text-lg leading-none text-ink backdrop-blur hover:border-accent hover:text-accent"
+        >
+          +
+        </button>
+        <button
+          onClick={() => zoomAt(1 / 1.4)}
+          title="Zoom out"
+          className="h-9 w-9 rounded border border-edge bg-panel/90 text-lg leading-none text-ink backdrop-blur hover:border-accent hover:text-accent"
+        >
+          −
+        </button>
       </div>
 
       {!ready && (

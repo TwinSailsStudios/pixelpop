@@ -7,12 +7,15 @@ import DiscordCTA from './components/DiscordCTA'
 import NameModal from './components/NameModal'
 import { useUser } from './hooks/useUser'
 import { useEconomy } from './hooks/useEconomy'
+import { useTheme } from './hooks/useTheme'
+import { BOARD_BG } from './lib/constants'
 
 const RECENT_KEY = 'pixelpop_recent_colors'
 
 export default function App() {
   const { uuid, profile, setDisplayName } = useUser()
   const econ = useEconomy()
+  const { theme, toggle } = useTheme()
   const [tool, setTool] = useState('place')
   const [color, setColor] = useState('#00ff9c')
   const [recent, setRecent] = useState(
@@ -70,26 +73,25 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [color])
 
+  const controls = (
+    <>
+      <NameModal current={profile?.display_name} onSave={setDisplayName} />
+      <button
+        onClick={toggle}
+        title="Toggle light / dark"
+        className="rounded border border-edge px-2 py-1.5 text-xs text-muted hover:border-accent hover:text-accent"
+      >
+        {theme === 'dark' ? '☀ LIGHT' : '☾ DARK'}
+      </button>
+      <DiscordCTA />
+      <Link to="/admin" className="text-[10px] text-muted hover:text-ink">
+        admin
+      </Link>
+    </>
+  )
+
   return (
     <div className="flex h-screen flex-col">
-      {/* header */}
-      <header className="flex items-center justify-between gap-4 border-b border-edge bg-panel px-4 py-2">
-        <div className="flex items-baseline gap-3">
-          <h1 className="text-sm font-bold tracking-[0.3em] text-accent">PIXELPOP</h1>
-          <span className="hidden text-[10px] text-muted sm:inline">// territory war</span>
-        </div>
-        <div className="flex items-center gap-3">
-          <NameModal current={profile?.display_name} onSave={setDisplayName} />
-          <DiscordCTA />
-          <Link
-            to="/admin"
-            className="hidden text-[10px] text-muted hover:text-ink sm:inline"
-          >
-            admin
-          </Link>
-        </div>
-      </header>
-
       <Toolbar
         tool={tool}
         setTool={setTool}
@@ -97,9 +99,10 @@ export default function App() {
         setColor={setColor}
         recent={recent}
         econ={econ}
+        controls={controls}
       />
 
-      {/* main */}
+      {/* board takes the rest of the screen */}
       <div className="flex min-h-0 flex-1">
         <main className="relative min-h-0 flex-1">
           <PixelCanvas
@@ -107,6 +110,7 @@ export default function App() {
             tool={tool}
             color={color}
             econ={econ}
+            boardBg={BOARD_BG[theme] || BOARD_BG.dark}
             onColorPick={onColorPick}
             onResult={onResult}
           />

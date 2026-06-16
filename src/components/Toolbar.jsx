@@ -7,10 +7,10 @@ const TOOLS = [
   { id: 'report', label: 'REPORT', hint: 'flag abuse' },
 ]
 
-export default function Toolbar({ tool, setTool, color, setColor, recent, econ }) {
+export default function Toolbar({ tool, setTool, color, setColor, recent, econ, controls }) {
   const { floor, rate, level, full, secondsToNext, fraction } = econ
   return (
-    <div className="flex flex-col gap-3 border-b border-edge bg-panel/80 p-3 backdrop-blur md:flex-row md:items-center md:justify-between">
+    <div className="flex flex-col flex-wrap gap-3 border-b border-edge bg-panel/80 px-3 py-2 backdrop-blur md:flex-row md:items-center md:justify-between">
       {/* tools */}
       <div className="flex flex-wrap gap-2">
         {TOOLS.map((t) => (
@@ -87,6 +87,11 @@ export default function Toolbar({ tool, setTool, color, setColor, recent, econ }
           </div>
         </div>
       </div>
+
+      {/* right-side controls (name, theme, discord, admin) */}
+      {controls && (
+        <div className="flex items-center gap-3">{controls}</div>
+      )}
     </div>
   )
 }

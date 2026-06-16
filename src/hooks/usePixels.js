@@ -15,14 +15,13 @@ export function usePixels(onChange) {
   const ctxRef = useRef(null)
   const [ready, setReady] = useState(false)
 
-  // Lazily create the offscreen buffer once.
+  // Lazily create the offscreen buffer once. Voids stay transparent so the
+  // themed board background (drawn on the visible canvas) shows through.
   if (!offscreenRef.current && typeof document !== 'undefined') {
     const c = document.createElement('canvas')
     c.width = GRID
     c.height = GRID
     const ctx = c.getContext('2d', { willReadFrequently: true })
-    ctx.fillStyle = VOID_COLOR
-    ctx.fillRect(0, 0, GRID, GRID)
     offscreenRef.current = c
     ctxRef.current = ctx
   }
@@ -31,18 +30,24 @@ export function usePixels(onChange) {
     (x, y, color) => {
       const ctx = ctxRef.current
       if (!ctx) return
-      ctx.fillStyle = color || VOID_COLOR
-      ctx.fillRect(x, y, 1, 1)
+      if (!color || color === VOID_COLOR) {
+        ctx.clearRect(x, y, 1, 1) // erase -> transparent
+      } else {
+        ctx.fillStyle = color
+        ctx.fillRect(x, y, 1, 1)
+      }
       onChange?.()
     },
     [onChange]
   )
 
-  // Read a single cell's color (used by the eyedropper).
+  // Read a single cell's color (eyedropper + optimistic-revert). Returns the
+  // VOID sentinel for empty cells so reverts erase rather than paint black.
   const sample = useCallback((x, y) => {
     const ctx = ctxRef.current
     if (!ctx) return VOID_COLOR
     const d = ctx.getImageData(x, y, 1, 1).data
+    if (d[3] < 128) return VOID_COLOR
     return (
       '#' +
       [d[0], d[1], d[2]].map((n) => n.toString(16).padStart(2, '0')).join('')
