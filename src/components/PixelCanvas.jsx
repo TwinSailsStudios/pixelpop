@@ -10,12 +10,51 @@ import {
 } from '../lib/constants'
 
 /**
+ * A small ring that hugs the cursor and fills as the next pixel charge banks.
+ * Green + center count when ready to act, muted while on cooldown. Positioned
+ * imperatively by the parent (see ringRef) so mouse-move never re-renders React.
+ */
+function CursorRing({ econ, color, tool }) {
+  const D = 42
+  const stroke = 4
+  const r = (D - stroke) / 2
+  const circ = 2 * Math.PI * r
+  const ready = (econ?.floor ?? 0) >= 1
+  const progress = econ?.full ? 1 : econ?.fraction ?? 0
+  const arc = ready ? '#00ff9c' : '#6b6b73'
+  const tinted = tool === 'place' && ready ? color : arc
+
+  return (
+    <svg
+      width={D}
+      height={D}
+      className="absolute -translate-x-1/2 -translate-y-1/2"
+      style={{ overflow: 'visible' }}
+    >
+      <circle cx={D / 2} cy={D / 2} r={r} fill="none"
+        stroke="rgba(255,255,255,0.12)" strokeWidth={stroke} />
+      <circle cx={D / 2} cy={D / 2} r={r} fill="none" stroke={tinted}
+        strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circ}
+        strokeDashoffset={circ * (1 - progress)}
+        transform={`rotate(-90 ${D / 2} ${D / 2})`}
+        style={{ transition: 'stroke-dashoffset 200ms linear' }} />
+      <text x={D / 2} y={D / 2} textAnchor="middle" dominantBaseline="central"
+        fontSize="12" fontFamily="monospace"
+        fill={ready ? '#e6e6e6' : '#6b6b73'}>
+        {econ?.floor ?? 0}
+      </text>
+    </svg>
+  )
+}
+
+/**
  * The 1000x1000 board. Renders an offscreen buffer onto a viewport-sized
  * canvas with a pan/zoom transform. Pointer interactions are routed through
  * the active tool (paint / destroy / eyedropper / report).
  */
 export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onResult }) {
   const canvasRef = useRef(null)
+  const ringRef = useRef(null)
   const frameRef = useRef(0)
 
   // View transform: grid->screen. scale = screen px per grid cell.
@@ -138,13 +177,35 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
     [requestRender]
   )
 
-  const onPointerDown = useCallback((e) => {
-    drag.current = { x: e.clientX, y: e.clientY, moved: false }
-    e.currentTarget.setPointerCapture?.(e.pointerId)
+  // Move the cooldown ring to the cursor. Imperative (no React state) so this
+  // can fire on every pointer move without re-rendering. `transform` is owned
+  // here, never in JSX, so React re-renders won't clobber it.
+  const moveRing = useCallback((clientX, clientY) => {
+    const el = ringRef.current
+    const canvas = canvasRef.current
+    if (!el || !canvas) return
+    const rect = canvas.getBoundingClientRect()
+    el.style.transform = `translate(${clientX - rect.left}px, ${clientY - rect.top}px)`
+    el.style.opacity = '1'
   }, [])
+
+  // Hide the ring until the pointer first enters.
+  useEffect(() => {
+    if (ringRef.current) ringRef.current.style.opacity = '0'
+  }, [])
+
+  const onPointerDown = useCallback(
+    (e) => {
+      moveRing(e.clientX, e.clientY)
+      drag.current = { x: e.clientX, y: e.clientY, moved: false }
+      e.currentTarget.setPointerCapture?.(e.pointerId)
+    },
+    [moveRing]
+  )
 
   const onPointerMove = useCallback(
     (e) => {
+      moveRing(e.clientX, e.clientY)
       const d = drag.current
       if (!d) return
       const dx = e.clientX - d.x
@@ -160,7 +221,7 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
         requestRender()
       }
     },
-    [requestRender]
+    [requestRender, moveRing]
   )
 
   // ---- tool actions --------------------------------------------------------
@@ -245,8 +306,8 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
     [toGrid, act]
   )
 
-  const cursor =
-    tool === 'eyedropper' || tool === 'report' ? 'crosshair' : 'pointer'
+  // Crosshair everywhere: the ring's center marks the exact target cell.
+  const cursor = 'crosshair'
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-void">
@@ -258,8 +319,17 @@ export default function PixelCanvas({ uuid, tool, color, econ, onColorPick, onRe
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerLeave={() => (drag.current = null)}
+        onPointerLeave={() => {
+          drag.current = null
+          if (ringRef.current) ringRef.current.style.opacity = '0'
+        }}
       />
+
+      {/* cooldown ring — positioned imperatively via ringRef (no style in JSX) */}
+      <div ref={ringRef} className="pointer-events-none absolute left-0 top-0 z-10">
+        <CursorRing econ={econ} color={color} tool={tool} />
+      </div>
+
       {!ready && (
         <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-muted">
           loading board…
