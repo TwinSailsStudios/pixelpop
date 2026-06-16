@@ -65,6 +65,7 @@ export default function PixelCanvas({ uuid, tool, color, fill, boardBg, borderBg
   const renderRef = useRef(null)
 
   const view = useRef({ scale: DEFAULT_SCALE, ox: 0, oy: 0 })
+  const centered = useRef(false)
   const drag = useRef(null)
   const shape = useRef({ start: null })          // line/square anchor
   const hoverCell = useRef({ x: -1, y: -1 })
@@ -217,10 +218,12 @@ export default function PixelCanvas({ uuid, tool, color, fill, boardBg, borderBg
       canvas.height = Math.floor(rect.height * dpr)
       canvas.style.width = rect.width + 'px'
       canvas.style.height = rect.height + 'px'
-      if (view.current.ox === 0 && view.current.oy === 0) {
+      // Spawn centered on the middle of the board, once we have a real size.
+      if (!centered.current && canvas.width > 0 && canvas.height > 0) {
         const s = view.current.scale
-        view.current.ox = canvas.width / 2 - (GRID * s) / 2
-        view.current.oy = canvas.height / 2 - (GRID * s) / 2
+        view.current.ox = canvas.width / 2 - (GRID / 2) * s
+        view.current.oy = canvas.height / 2 - (GRID / 2) * s
+        centered.current = true
       }
       requestRender()
       ensureView()
